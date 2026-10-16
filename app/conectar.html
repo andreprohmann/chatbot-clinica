@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conectar WhatsApp</title>
+<style>
+  :root { --borda:#d9dde3; --fundo:#f5f6f8; --texto:#1f2328; --suave:#5b6470; --verde:#1a7f37; --vermelho:#c62828; --azul:#1f6feb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, sans-serif; color:var(--texto); background:var(--fundo); }
+  main { max-width:720px; margin:32px auto; padding:0 16px; display:flex; flex-direction:column; gap:16px; }
+  h1 { font-size:22px; margin:0; }
+  .cartao { background:#fff; border:1px solid var(--borda); border-radius:10px; padding:20px; }
+  .cartao h2 { font-size:17px; margin:0 0 8px; }
+  .suave { color:var(--suave); }
+  button { font:inherit; border-radius:8px; padding:10px 16px; cursor:pointer; border:1px solid var(--borda); background:#fff; }
+  button.primario { background:var(--verde); border-color:var(--verde); color:#fff; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; margin:8px 0 0; }
+  dt { color:var(--suave); }
+  dd { margin:0; word-break:break-all; }
+  .selo { display:inline-block; font-size:13px; font-weight:600; border-radius:10px; padding:2px 10px; }
+  .selo.ok { background:#dafbe1; color:var(--verde); }
+  .selo.nao { background:#eaeef2; color:var(--suave); }
+  #mensagem { display:none; padding:12px 16px; border-radius:8px; }
+  #mensagem.erro { display:block; background:#ffebe9; color:var(--vermelho); }
+  #mensagem.ok { display:block; background:#dafbe1; color:var(--verde); }
+  #mensagem.info { display:block; background:#ddf4ff; color:#0550ae; }
+  ul { margin:8px 0 0; padding-left:20px; }
+  details summary { cursor:pointer; color:var(--suave); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Conectar WhatsApp</h1>
+
+  <section class="cartao">
+    <h2>Situação atual</h2>
+    <div id="status" class="suave">Carregando…</div>
+  </section>
+
+  <div id="mensagem" role="status"></div>
+
+  <section class="cartao">
+    <h2>Conectar o WhatsApp do celular <span class="suave">(recomendado)</span></h2>
+    <p class="suave">O número continua funcionando no app WhatsApp Business do celular, e o bot passa a atender pelo sistema.</p>
+    <ul class="suave">
+      <li>Tenha o celular da clínica em mãos, com o WhatsApp Business atualizado.</li>
+      <li>Na janela da Meta, escolha conectar o número que já usa o app e leia o QR code com o celular.</li>
+      <li>Não demore na última tela: o código da Meta vale só 30 segundos.</li>
+    </ul>
+    <p><button class="primario" id="btn-coexistencia" disabled>Conectar o WhatsApp do celular</button></p>
+  </section>
+
+  <section class="cartao">
+    <details>
+      <summary>Usar um número novo, só no sistema</summary>
+      <p class="suave">O número fica exclusivo do sistema e <strong>não poderá ser usado no app do celular</strong>. Use só se for um chip novo.</p>
+      <p><button id="btn-numero-novo" disabled>Conectar número novo</button></p>
+    </details>
+  </section>
+</main>
+
+<script>
+const CONFIG = /*CONFIG*/{};
+let sessao = {};
+
+const $ = (s) => document.querySelector(s);
+// Monta a URL a partir da origem, sem usuário/senha (o Chrome recusa fetch com credenciais na URL).
+const url = (caminho) => new URL(caminho, location.origin).href;
+const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function mostrar(texto, tipo = "info") {
+  const m = $("#mensagem");
+  m.textContent = texto;
+  m.className = tipo;
+}
+
+function linha(dl, rotulo, valor) {
+  const dt = document.createElement("dt"); dt.textContent = rotulo;
+  const dd = document.createElement("dd"); dd.textContent = valor || "—";
+  dl.append(dt, dd);
+}
+
+async function carregarStatus() {
+  const alvo = $("#status");
+  let s;
+  try {
+    const r = await fetch(url("/conectar-whatsapp/status"));
+    if (!r.ok) throw new Error(`erro ${r.status}`);
+    s = await r.json();
+  } catch (e) {
+    alvo.textContent = "Não foi possível carregar a situação (" + e.message + "). Recarregue a página.";
+    return;
+  }
+  alvo.replaceChildren();
+  const selo = document.createElement("span");
+  selo.className = "selo " + (s.conectado ? "ok" : "nao");
+  selo.textContent = s.conectado ? "Conectado" : "Nenhum número conectado";
+  alvo.append(selo);
+  if (s.conectado) {
+    const dl = document.createElement("dl");
+    linha(dl, "Número", s.numero);
+    linha(dl, "Nome verificado", s.nome_verificado);
+    linha(dl, "Modo", s.coexistencia ? "Coexistência (app do celular + sistema)" : "Só sistema");
+    linha(dl, "Conectado em", new Date(s.conectado_em).toLocaleString("pt-BR"));
+    linha(dl, "WABA ID", s.waba_id);
+    linha(dl, "Phone number ID", s.phone_number_id);
+    if (s.ultimo_evento_meta) linha(dl, "Último aviso da Meta", s.ultimo_evento_meta);
+    alvo.append(dl);
+  }
+}
+
+// A janela da Meta informa as contas escolhidas por mensagem (session logging).
+window.addEventListener("message", (event) => {
+  if (!event.origin.endsWith("facebook.com")) return;
+  let dados;
+  try { dados = JSON.parse(event.data); } catch { return; }
+  if (dados.type !== "WA_EMBEDDED_SIGNUP") return;
+  if (dados.event && dados.event.startsWith("FINISH")) {
+    sessao = { ...dados.data, evento: dados.event };
+  } else if (dados.event === "CANCEL") {
+    const d = dados.data || {};
+    mostrar(d.error_message ? `A Meta informou um erro: ${d.error_message} (código ${d.error_code || "?"})`
+                            : `Conexão interrompida na etapa ${d.current_step || "inicial"}.`, "erro");
+  }
+});
+
+async function finalizar(code, coexistencia) {
+  mostrar("Finalizando a conexão…");
+  for (let i = 0; i < 25 && !sessao.waba_id; i++) await espera(200);  // a mensagem da janela pode chegar depois
+  if (!sessao.waba_id) {
+    mostrar("A Meta não informou a conta WhatsApp Business. Tente conectar de novo.", "erro");
+    return;
+  }
+  const r = await fetch(url("/conectar-whatsapp/finalizar"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code,
+      waba_id: sessao.waba_id,
+      phone_number_id: sessao.phone_number_id || "",
+      coexistencia: coexistencia || sessao.evento === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+    }),
+  });
+  const resposta = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    mostrar("Não foi possível concluir: " + (resposta.detail || `erro ${r.status}`), "erro");
+    return;
+  }
+  let texto = `Conectado: ${resposta.numero}. O bot já está atendendo.`;
+  if (resposta.coexistencia) texto += " A sincronização de contatos e conversas foi solicitada à Meta.";
+  if (resposta.pin) texto += ` Guarde o PIN de verificação em duas etapas do número: ${resposta.pin}`;
+  mostrar(texto, "ok");
+  carregarStatus();
+}
+
+function conectar(coexistencia) {
+  sessao = {};
+  mostrar("Siga as instruções na janela da Meta…");
+  const extras = { setup: {}, sessionInfoVersion: "3" };
+  if (coexistencia) extras.featureType = "whatsapp_business_app_onboarding";
+  // O callback do FB.login não pode ser async.
+  FB.login((resposta) => {
+    const code = resposta.authResponse && resposta.authResponse.code;
+    if (code) finalizar(code, coexistencia);
+    else mostrar("Conexão cancelada.", "erro");
+  }, { config_id: CONFIG.configId, response_type: "code", override_default_response_type: true, extras });
+}
+
+window.fbAsyncInit = function () {
+  FB.init({ appId: CONFIG.appId, autoLogAppEvents: true, xfbml: true, version: CONFIG.versao });
+  $("#btn-coexistencia").disabled = false;
+  $("#btn-numero-novo").disabled = false;
+};
+$("#btn-coexistencia").onclick = () => conectar(true);
+$("#btn-numero-novo").onclick = () => {
+  if (confirm("O número deixará de funcionar no app do celular. Continuar?")) conectar(false);
+};
+
+carregarStatus();
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/pt_BR/sdk.js"></script>
+</body>
+</html>

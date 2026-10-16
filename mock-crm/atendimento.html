@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atendimento WhatsApp</title>
+<style>
+  :root { --borda:#d9dde3; --fundo:#f5f6f8; --texto:#1f2328; --suave:#5b6470; --azul:#1f6feb; --vermelho:#c62828; --verde:#1a7f37; --amarelo:#9a6700; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; color:var(--texto); background:var(--fundo); height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; gap:12px; align-items:center; padding:10px 16px; background:#fff; border-bottom:1px solid var(--borda); }
+  header h1 { font-size:16px; margin:0 auto 0 0; }
+  input, textarea, button { font:inherit; }
+  input, textarea { border:1px solid var(--borda); border-radius:6px; padding:6px 8px; }
+  button { border:1px solid var(--borda); background:#fff; border-radius:6px; padding:6px 12px; cursor:pointer; }
+  button.primario { background:var(--azul); border-color:var(--azul); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  main { flex:1; display:grid; grid-template-columns:320px 1fr; min-height:0; }
+  #lista { background:#fff; border-right:1px solid var(--borda); overflow-y:auto; }
+  .filtros { display:flex; gap:4px; padding:8px; border-bottom:1px solid var(--borda); flex-wrap:wrap; }
+  .filtros button.ativo { background:var(--texto); color:#fff; border-color:var(--texto); }
+  .item { padding:10px 12px; border-bottom:1px solid var(--borda); cursor:pointer; }
+  .item:hover, .item.selecionado { background:#eef3fd; }
+  .item .linha1 { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+  .item .previa { color:var(--suave); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .selo { font-size:11px; font-weight:600; border-radius:10px; padding:1px 8px; white-space:nowrap; }
+  .selo.crise { background:var(--vermelho); color:#fff; }
+  .selo.aguardando_humano { background:#fff4d6; color:var(--amarelo); }
+  .selo.humano { background:#dafbe1; color:var(--verde); }
+  .selo.bot { background:#eaeef2; color:var(--suave); }
+  #conversa { display:flex; flex-direction:column; min-height:0; }
+  #topo { padding:10px 16px; background:#fff; border-bottom:1px solid var(--borda); display:flex; gap:8px; align-items:center; }
+  #topo .titulo { margin-right:auto; }
+  #mensagens { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:6px; }
+  .msg { max-width:70%; padding:8px 10px; border-radius:8px; white-space:pre-wrap; word-wrap:break-word; }
+  .msg.paciente { align-self:flex-start; background:#fff; border:1px solid var(--borda); }
+  .msg.bot { align-self:flex-end; background:#eaeef2; }
+  .msg.atendente { align-self:flex-end; background:#d7e7ff; }
+  .msg.sistema { align-self:center; background:none; color:var(--suave); font-size:12px; }
+  .msg .meta { display:block; font-size:11px; color:var(--suave); margin-top:2px; }
+  #envio { display:flex; gap:8px; padding:10px 16px; background:#fff; border-top:1px solid var(--borda); }
+  #envio textarea { flex:1; resize:none; height:42px; }
+  #aviso { padding:8px 16px; background:#ffebe9; color:var(--vermelho); display:none; }
+  .vazio { margin:auto; color:var(--suave); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Atendimento WhatsApp <small style="font-weight:400;color:var(--suave)">(tela de referência para o CRM)</small></h1>
+  <label>Atendente: <input id="atendente" placeholder="Seu nome" size="16"></label>
+</header>
+<div id="aviso"></div>
+<main>
+  <section id="lista">
+    <div class="filtros">
+      <button data-estado="aguardando_humano" class="ativo">Aguardando</button>
+      <button data-estado="humano">Em atendimento</button>
+      <button data-estado="bot">Com o bot</button>
+      <button data-estado="">Todas</button>
+    </div>
+    <div id="itens"></div>
+  </section>
+  <section id="conversa"><div class="vazio">Selecione uma conversa</div></section>
+</main>
+<script>
+const API = "/atendimento/api";
+const ROTULOS = { aguardando_humano: "Aguardando", humano: "Em atendimento", bot: "Com o bot" };
+let filtro = "aguardando_humano", selecionada = null, ultimaQtd = -1, assinatura = "";
+
+const $ = (sel) => document.querySelector(sel);
+const atendenteInput = $("#atendente");
+try { atendenteInput.value = localStorage.getItem("atendente") || ""; } catch {}
+atendenteInput.addEventListener("change", () => {
+  try { localStorage.setItem("atendente", atendenteInput.value.trim()); } catch {}
+  assinatura = ""; carregarConversa();
+});
+const atendente = () => atendenteInput.value.trim();
+
+function el(tag, classe, texto) {
+  const e = document.createElement(tag);
+  if (classe) e.className = classe;
+  if (texto !== undefined) e.textContent = texto;  // nunca innerHTML com conteúdo do paciente
+  return e;
+}
+function hora(iso) { return iso ? new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : ""; }
+function aviso(texto) { const a = $("#aviso"); a.textContent = texto || ""; a.style.display = texto ? "block" : "none"; }
+
+async function api(caminho, opcoes = {}) {
+  const r = await fetch(API + caminho, { headers: { "Content-Type": "application/json" }, ...opcoes });
+  const dados = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(dados.detail || `Erro ${r.status}`);
+  return dados;
+}
+
+function selo(c) {
+  const crise = c.motivo_atendimento === "crise" && c.estado !== "bot";
+  return el("span", "selo " + (crise ? "crise" : c.estado), crise ? "CRISE" : ROTULOS[c.estado] || c.estado);
+}
+
+async function carregarLista() {
+  try {
+    const { conversas } = await api("/conversas" + (filtro ? `?estado=${filtro}` : ""));
+    conversas.sort((a, b) => (b.motivo_atendimento === "crise") - (a.motivo_atendimento === "crise"));
+    const itens = $("#itens");
+    itens.replaceChildren(...conversas.map((c) => {
+      const item = el("div", "item" + (c.id === selecionada ? " selecionado" : ""));
+      const l1 = el("div", "linha1");
+      l1.append(el("span", "", c.nome_contato || c.telefone), selo(c));
+      item.append(l1, el("div", "previa", c.ultima_mensagem || ""), el("small", "", hora(c.atualizado_em)));
+      item.onclick = () => { selecionada = c.id; ultimaQtd = -1; assinatura = ""; carregarConversa(); carregarLista(); };
+      return item;
+    }));
+    if (!conversas.length) itens.append(el("p", "vazio", "Nenhuma conversa aqui."));
+    aviso("");
+  } catch (e) { aviso("Não foi possível carregar as conversas: " + e.message); }
+}
+
+async function carregarConversa() {
+  if (!selecionada) return;
+  let dados;
+  try { dados = await api(`/conversas/${selecionada}`); } catch (e) { aviso(e.message); return; }
+  const { conversa: c, mensagens } = dados;
+  // Só redesenha quando algo muda, para não tirar o foco de quem está digitando.
+  const nova = [c.id, mensagens.length, c.estado, c.atendente, c.ativa, atendente()].join("|");
+  if (nova === assinatura) return;
+  assinatura = nova;
+  const painel = $("#conversa");
+  const minha = c.estado === "humano" && c.atendente === atendente();
+
+  const topo = el("div"); topo.id = "topo";
+  const titulo = el("div", "titulo");
+  titulo.append(el("strong", "", c.nome_contato || c.telefone), document.createTextNode(` · ${c.telefone} `), selo(c));
+  if (c.atendente) titulo.append(el("small", "", ` com ${c.atendente}`));
+  const assumir = el("button", "primario", "Assumir");
+  assumir.disabled = !c.ativa || minha;
+  assumir.onclick = () => acao(`/conversas/${c.id}/assumir`, { atendente: atendente() });
+  const encerrar = el("button", "", "Encerrar e devolver ao bot");
+  encerrar.disabled = !c.ativa || c.estado === "bot";
+  encerrar.onclick = () => confirm("Encerrar este atendimento?") &&
+    acao(`/conversas/${c.id}/encerrar`, { atendente: atendente(), enviar_despedida: true });
+  topo.append(titulo, assumir, encerrar);
+
+  const lista = el("div"); lista.id = "mensagens";
+  for (const m of mensagens) {
+    const b = el("div", "msg " + (m.tipo === "sistema" ? "sistema" : m.autor), m.conteudo);
+    b.append(el("span", "meta", `${m.autor === "atendente" ? m.atendente : m.autor} · ${hora(m.criado_em)}`));
+    lista.append(b);
+  }
+
+  const envio = el("form"); envio.id = "envio";
+  const texto = el("textarea"); texto.placeholder = minha ? "Escreva sua resposta…" : "Assuma a conversa para responder";
+  texto.disabled = !minha;
+  const enviar = el("button", "primario", "Enviar"); enviar.disabled = !minha;
+  envio.append(texto, enviar);
+  envio.onsubmit = async (ev) => {
+    ev.preventDefault();
+    if (!texto.value.trim()) return;
+    await acao(`/conversas/${c.id}/mensagens`, { atendente: atendente(), texto: texto.value.trim() });
+  };
+  texto.onkeydown = (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); envio.requestSubmit(); } };
+
+  const rolar = mensagens.length !== ultimaQtd;
+  const rascunho = $("#envio textarea")?.value;
+  painel.replaceChildren(topo, lista, envio);
+  if (rascunho && minha) texto.value = rascunho;
+  if (minha) texto.focus();
+  if (rolar) lista.scrollTop = lista.scrollHeight;
+  ultimaQtd = mensagens.length;
+}
+
+async function acao(caminho, corpo) {
+  if (!atendente()) { aviso("Informe seu nome no campo Atendente."); atendenteInput.focus(); return; }
+  try {
+    await api(caminho, { method: "POST", body: JSON.stringify(corpo) });
+    aviso("");
+    if (caminho.endsWith("/mensagens")) $("#envio textarea").value = "";
+  } catch (e) { aviso(e.message); }
+  await carregarConversa(); await carregarLista();
+}
+
+document.querySelectorAll(".filtros button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll(".filtros button").forEach((x) => x.classList.remove("ativo"));
+  b.classList.add("ativo"); filtro = b.dataset.estado; carregarLista();
+});
+
+carregarLista();
+setInterval(() => { carregarLista(); carregarConversa(); }, 3000);
+</script>
+</body>
+</html>

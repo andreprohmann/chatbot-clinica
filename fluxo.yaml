@@ -1,0 +1,441 @@
+# Fluxo de conversa do assistente da clínica.
+#
+# A equipe pode editar os TEXTOS livremente. Ao mudar a ESTRUTURA (passos, opções, destinos),
+# rode `pytest` antes de publicar: os testes validam que todo destino existe.
+#
+# Formatação do WhatsApp: *negrito*, _itálico_. Variáveis: {nome_da_variavel}.
+# Botões: até 3 opções com até 20 caracteres viram botões; acima disso, viram lista (até 10).
+#
+# Tipos de passo:
+#   mensagem          envia `texto` e segue para `proximo` (sem `proximo`, encerra)
+#   opcoes            envia `texto` com opções; cada opção tem `proximo` (ou usa o `proximo` do passo)
+#   opcoes_dinamicas  opções vindas do CRM, lidas da variável `fonte`
+#   texto_livre       pergunta aberta; a resposta vai para `salvar_em`
+#   acao              executa uma função de app/acoes.py; o resultado escolhe o destino em `saidas`
+#   condicao          compara `variavel` com `igual` e segue para `entao` ou `senao`
+#   definir           só define variáveis e segue
+#   transferir        passa a conversa para a equipe (tela de atendimento do CRM)
+# Qualquer passo aceita `definir: {variavel: valor}`, aplicado ao entrar no passo.
+
+inicio: identificar
+menu: menu_principal
+
+# Expressões de risco. O texto do paciente é comparado em minúsculas e SEM acentos,
+# então escreva os padrões sem acento. Validar com o(a) psicólogo(a) responsável técnico.
+crise:
+  - suicid
+  - me matar
+  - me suicidar
+  - quero morrer
+  - vontade de morrer
+  - nao quero mais viver
+  - tirar (a )?minha (propria )?vida
+  - acabar com (a )?minha vida
+  - acabar com tudo
+  - me machucar
+  - me cortar
+  - autoles
+  - nao aguento mais
+
+mensagens:
+  nao_entendi: "Desculpe, não consegui entender. 😅 Por favor, escolha uma das opções abaixo ou digite *menu* para voltar ao início."
+  nao_entendi_transferir: "Parece que não estou conseguindo ajudar com isso. Vou chamar alguém da equipe para falar com você. 💬"
+  texto_curto: "Pode escrever um pouco mais, por favor?"
+  midia: "Recebi sua mensagem! No momento consigo responder apenas por texto e pelas opções do menu. Se preferir, posso chamar alguém da equipe."
+  equipe_dentro_horario: "Certo! Vou chamar alguém da nossa equipe. Em instantes uma pessoa vai continuar o atendimento por aqui. 💬"
+  equipe_fora_horario: |-
+    Nossa equipe atende de [DIAS] das [HORÁRIO]. Sua mensagem ficou registrada e responderemos assim que possível.
+
+    Enquanto isso, posso ajudar com agendamentos e informações a qualquer hora.
+
+    ⚠️ *Se você estiver passando por uma emergência*, ligue para o *CVV – 188* (24h, gratuito) ou para o *SAMU – 192*.
+  crise: |-
+    Obrigado por compartilhar isso comigo. O que você está sentindo importa, e você não precisa passar por isso sozinho(a). 💙
+
+    Estou avisando agora nossa equipe para falar com você.
+
+    *Se você estiver em perigo neste momento, procure ajuda imediata:*
+    📞 *CVV – 188* (ligação gratuita, 24 horas)
+    💬 Chat do CVV: cvv.org.br
+    🚑 *SAMU – 192*
+    🏥 Ou vá ao pronto-socorro mais próximo
+
+    Se puder, fique perto de alguém de confiança.
+  crise_fora_horario: "Nossa equipe não está disponível agora, por isso é muito importante que você entre em contato com o *CVV (188)* ou o *SAMU (192)*. Eles estão disponíveis agora."
+  atendimento_encerrado: "Atendimento encerrado. Se precisar de algo, é só mandar uma mensagem. Cuide-se! 💙"
+
+passos:
+  # ------------------------------------------------------------ identificação
+  identificar:
+    tipo: acao
+    acao: identificar_paciente
+    saidas:
+      cadastrado: menu_principal
+      recorrente: menu_principal
+      novo: boas_vindas
+
+  # ------------------------------------------------------------ 1. boas-vindas e LGPD
+  boas_vindas:
+    tipo: opcoes
+    texto: |-
+      Olá! 😊 Seja bem-vindo(a) à *[NOME DA CLÍNICA]*.
+
+      Eu sou o assistente virtual da clínica e posso ajudar com agendamentos, informações e encaminhamento para nossa equipe.
+
+      Antes de continuar: para atender você, precisamos registrar alguns dados (como nome e telefone). Eles são usados *apenas para o seu atendimento*, tratados com sigilo e de acordo com a LGPD. Você pode consultar nossa política de privacidade aqui: [LINK]
+
+      Podemos continuar?
+    opcoes:
+      - {rotulo: "Sim, continuar", proximo: registrar_consentimento}
+      - {rotulo: "Falar com a equipe", proximo: transferir_equipe}
+
+  registrar_consentimento:
+    tipo: acao
+    acao: registrar_consentimento
+    definir: {saudacao: "Como posso ajudar você hoje?"}
+    proximo: menu_principal
+
+  # ------------------------------------------------------------ 2. menu
+  menu_voltar:
+    tipo: definir
+    definir: {saudacao: "Claro! Como posso ajudar?"}
+    proximo: menu_principal
+
+  menu_principal:
+    tipo: opcoes
+    texto: "{saudacao}"
+    opcoes:
+      - {rotulo: "Agendar consulta", descricao: "Primeira consulta ou retorno", proximo: agendar_inicio}
+      - {rotulo: "Minhas consultas", descricao: "Ver, remarcar ou cancelar", proximo: minhas_consultas}
+      - {rotulo: "Valores e convênios", descricao: "Formas de pagamento", proximo: valores}
+      - {rotulo: "Atendimento online", descricao: "Como funciona", proximo: atendimento_online}
+      - {rotulo: "Endereço e horários", descricao: "Como chegar", proximo: endereco}
+      - {rotulo: "Falar com a equipe", descricao: "Atendimento humano", proximo: transferir_equipe}
+
+  # ------------------------------------------------------------ 3. agendamento
+  agendar_inicio:
+    tipo: opcoes
+    definir: {remarcando: ""}
+    texto: "Vamos agendar! Essa será sua *primeira consulta* na clínica ou é um *retorno*?"
+    salvar_em: tipo_consulta
+    opcoes:
+      - {rotulo: "Primeira consulta", proximo: primeira_nome}
+      - {rotulo: "Retorno", proximo: verificar_retorno}
+
+  primeira_nome:
+    tipo: texto_livre
+    texto: |-
+      Que bom que você nos procurou. Dar esse passo é importante. 💙
+
+      Qual é o seu *nome completo*?
+    salvar_em: nome_completo
+    proximo: extrair_nome
+
+  extrair_nome:
+    tipo: acao
+    acao: extrair_primeiro_nome
+    proximo: para_quem
+
+  para_quem:
+    tipo: opcoes
+    texto: "Obrigado, {primeiro_nome}. A consulta é para *você* ou para *outra pessoa* (por exemplo, um filho ou dependente)?"
+    opcoes:
+      - {rotulo: "Para mim", proximo: para_mim}
+      - {rotulo: "Para outra pessoa", proximo: outra_pessoa}
+
+  para_mim:
+    tipo: definir
+    definir: {paciente_nome: "{nome_completo}"}
+    proximo: modalidade
+
+  outra_pessoa:
+    tipo: texto_livre
+    texto: "Entendi. Qual é o nome e a idade da pessoa que será atendida?"
+    salvar_em: paciente_nome
+    proximo: modalidade
+
+  verificar_retorno:
+    tipo: acao
+    acao: verificar_cadastro
+    saidas:
+      sem_cadastro: retorno_sem_cadastro
+    proximo: retorno
+
+  retorno_sem_cadastro:
+    tipo: mensagem
+    texto: "Não encontrei um cadastro com este número. Sem problemas, vamos seguir como primeira consulta."
+    definir: {tipo_consulta: "Primeira consulta"}
+    proximo: primeira_nome
+
+  retorno:
+    tipo: mensagem
+    texto: "Vou verificar a agenda para o seu retorno. Um momento..."
+    definir: {modalidade: "Tanto faz", profissional: "{ultimo_profissional_id}"}
+    proximo: periodo
+
+  modalidade:
+    tipo: opcoes
+    texto: "Você prefere atendimento *presencial* ou *online*?"
+    salvar_em: modalidade
+    opcoes:
+      - {rotulo: "Presencial"}
+      - {rotulo: "Online"}
+      - {rotulo: "Tanto faz"}
+    proximo: profissional_pergunta
+
+  profissional_pergunta:
+    tipo: opcoes
+    texto: "Você tem preferência por algum profissional?"
+    opcoes:
+      - {rotulo: "Ver profissionais", proximo: buscar_profissionais}
+      - {rotulo: "Sem preferência", proximo: sem_preferencia}
+
+  sem_preferencia:
+    tipo: definir
+    definir: {profissional: ""}
+    proximo: periodo
+
+  buscar_profissionais:
+    tipo: acao
+    acao: buscar_profissionais
+    saidas:
+      erro: erro_sistema
+      vazio: sem_preferencia
+    proximo: escolher_profissional
+
+  escolher_profissional:
+    tipo: opcoes_dinamicas
+    texto: "Escolha o(a) profissional:"
+    fonte: lista_profissionais
+    salvar_em: profissional
+    proximo: periodo
+
+  periodo:
+    tipo: opcoes
+    texto: "Qual período funciona melhor para você?"
+    salvar_em: periodo
+    opcoes:
+      - {rotulo: "Manhã"}
+      - {rotulo: "Tarde"}
+      - {rotulo: "Noite"}
+    proximo: buscar_horarios
+
+  buscar_horarios:
+    tipo: acao
+    acao: buscar_horarios
+    saidas:
+      erro: erro_sistema
+      vazio: sem_horario
+    proximo: escolher_horario
+
+  escolher_horario:
+    tipo: opcoes_dinamicas
+    texto: "Encontrei estes horários disponíveis. Escolha o que for melhor para você:"
+    fonte: lista_horarios
+    salvar_em: horario
+    proximo: confirmar
+
+  sem_horario:
+    tipo: opcoes
+    texto: "No momento não encontrei horários nesse período. 😕 Posso mostrar outros períodos ou colocar você na *lista de espera*: avisamos assim que surgir uma vaga."
+    opcoes:
+      - {rotulo: "Outro período", proximo: periodo}
+      - {rotulo: "Lista de espera", proximo: lista_espera}
+      - {rotulo: "Falar com a equipe", proximo: transferir_equipe}
+
+  lista_espera:
+    tipo: acao
+    acao: registrar_lista_espera
+    saidas:
+      erro: erro_sistema
+    proximo: lista_espera_ok
+
+  lista_espera_ok:
+    tipo: mensagem
+    texto: "Pronto! Você está na nossa lista de espera para o período da *{periodo}*. Avisaremos por aqui assim que surgir uma vaga. 💙"
+    proximo: encerramento
+
+  confirmar:
+    tipo: opcoes
+    texto: |-
+      Confira os dados da sua consulta:
+
+      👤 *Paciente:* {paciente_nome}
+      🧑‍⚕️ *Profissional:* {horario_descricao}
+      📅 *Data e horário:* {horario_rotulo}
+      📍 *Modalidade:* {modalidade}
+
+      Está tudo certo?
+    opcoes:
+      - {rotulo: "Confirmar", proximo: gravar_agendamento}
+      - {rotulo: "Alterar", proximo: periodo}
+
+  gravar_agendamento:
+    tipo: acao
+    acao: gravar_agendamento
+    saidas:
+      erro: erro_sistema
+      ocupado: horario_ocupado
+    proximo: agendamento_concluido
+
+  horario_ocupado:
+    tipo: mensagem
+    texto: "Esse horário acabou de ser preenchido. 😕 Vamos escolher outro."
+    proximo: periodo
+
+  agendamento_concluido:
+    tipo: mensagem
+    texto: |-
+      Pronto, {primeiro_nome}! Sua consulta está agendada. ✅
+
+      Vamos enviar um lembrete um dia antes. Se precisar remarcar, é só me chamar aqui com pelo menos *[24h]* de antecedência.
+    proximo: concluido_modalidade
+
+  concluido_modalidade:
+    tipo: condicao
+    variavel: modalidade
+    igual: "Online"
+    entao: concluido_online
+    senao: concluido_presencial
+
+  concluido_online:
+    tipo: mensagem
+    texto: "💻 O link da sessão será enviado [QUANDO/COMO]."
+    proximo: encerramento
+
+  concluido_presencial:
+    tipo: mensagem
+    texto: "📍 Nosso endereço é [ENDEREÇO]. [Link do mapa]"
+    proximo: encerramento
+
+  # ------------------------------------------------------------ 4. minhas consultas
+  minhas_consultas:
+    tipo: acao
+    acao: buscar_consultas
+    saidas:
+      erro: erro_sistema
+      vazio: sem_consultas
+    proximo: escolher_consulta
+
+  escolher_consulta:
+    tipo: opcoes_dinamicas
+    texto: "Encontrei estas consultas marcadas. Qual delas você quer ver?"
+    fonte: lista_consultas
+    salvar_em: consulta
+    proximo: consulta_acao
+
+  consulta_acao:
+    tipo: opcoes
+    texto: |-
+      📅 {consulta_rotulo} – {consulta_descricao}
+
+      O que você gostaria de fazer?
+    opcoes:
+      - {rotulo: "Remarcar", proximo: remarcar}
+      - {rotulo: "Cancelar", proximo: cancelar_confirmacao}
+      - {rotulo: "Voltar", proximo: menu_voltar}
+
+  sem_consultas:
+    tipo: opcoes
+    texto: "Não encontrei consultas marcadas para este número."
+    opcoes:
+      - {rotulo: "Agendar consulta", proximo: agendar_inicio}
+      - {rotulo: "Voltar ao menu", proximo: menu_voltar}
+
+  remarcar:
+    tipo: mensagem
+    texto: "Vamos encontrar um novo horário."
+    definir: {remarcando: "sim", modalidade: "Tanto faz", profissional: ""}
+    proximo: periodo
+
+  cancelar_confirmacao:
+    tipo: opcoes
+    texto: |-
+      Tem certeza que deseja cancelar a consulta de *{consulta_rotulo}* com {consulta_descricao}?
+
+      Lembrando que, pela nossa política, cancelamentos com menos de *[24h]* de antecedência podem ser cobrados. [Remover este parágrafo se a clínica não cobrar]
+    opcoes:
+      - {rotulo: "Sim, cancelar", proximo: cancelar_gravar}
+      - {rotulo: "Não, manter", proximo: cancelar_manter}
+
+  cancelar_gravar:
+    tipo: acao
+    acao: cancelar_consulta
+    saidas:
+      erro: erro_sistema
+    proximo: cancelado
+
+  cancelado:
+    tipo: mensagem
+    texto: "Consulta cancelada. Quando quiser agendar novamente, estou por aqui. 💙"
+    proximo: encerramento
+
+  cancelar_manter:
+    tipo: mensagem
+    texto: "Combinado, sua consulta continua marcada. 😊"
+    proximo: encerramento
+
+  # ------------------------------------------------------------ 5. informações
+  valores:
+    tipo: mensagem
+    texto: |-
+      💳 *Valores e formas de pagamento*
+
+      • Consulta particular: [VALOR ou "informado pela equipe"]
+      • Convênios aceitos: [LISTA]
+      • Formas de pagamento: [Pix, cartão etc.]
+      • Emitimos recibo para reembolso: [SIM/NÃO]
+    proximo: encerramento
+
+  atendimento_online:
+    tipo: mensagem
+    texto: |-
+      💻 *Como funciona o atendimento online*
+
+      As sessões são realizadas por videochamada em plataforma segura, com o mesmo sigilo do atendimento presencial.
+
+      Para um bom atendimento, recomendamos:
+      • Um lugar reservado e silencioso
+      • Fone de ouvido
+      • Conexão de internet estável
+
+      O link é enviado [QUANDO/COMO].
+    proximo: encerramento
+
+  endereco:
+    tipo: mensagem
+    texto: |-
+      📍 *[NOME DA CLÍNICA]*
+      [ENDEREÇO COMPLETO]
+      [Link do Google Maps]
+
+      🕐 *Horário de funcionamento:*
+      Segunda a sexta: [HORÁRIO]
+      Sábado: [HORÁRIO]
+
+      [Informações de estacionamento e acessibilidade]
+    proximo: encerramento
+
+  # ------------------------------------------------------------ 6. equipe e erros
+  transferir_equipe:
+    tipo: transferir
+    motivo: solicitado_pelo_paciente
+
+  erro_sistema:
+    tipo: transferir
+    motivo: erro_sistema
+    texto: "Tive um problema para acessar nossa agenda agora. 😕 Vou chamar alguém da equipe para continuar com você."
+
+  # ------------------------------------------------------------ 8. encerramento
+  encerramento:
+    tipo: opcoes
+    texto: "Posso ajudar com mais alguma coisa?"
+    opcoes:
+      - {rotulo: "Sim", proximo: menu_voltar}
+      - {rotulo: "Não, obrigado(a)", proximo: despedida}
+
+  despedida:
+    tipo: mensagem
+    texto: |-
+      Foi um prazer ajudar! Cuide-se. 💙
+      *[NOME DA CLÍNICA]*

@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- bot-whatsapp ---
+# Bancos SQLite: guardam conversas de pacientes e o token do WhatsApp
+*.db
+*.db-wal
+*.db-shm
