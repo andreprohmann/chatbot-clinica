@@ -162,6 +162,9 @@ Sem coexistência, o número fica exclusivo da API e não funciona mais no app d
 
 ## Hospedagem
 
+Passo a passo para a VM gratuita do Google Cloud (e2-micro), com script de instalação, HTTPS
+automático e backup diário: **[deploy/README.md](deploy/README.md)**.
+
 - **Precisa ficar sempre ligado.** Evite planos gratuitos que "dormem": a Meta reenvia o webhook
   e um alerta de crise atrasaria.
 - **Uma instância só.** O controle de ordem das mensagens fica em memória e o banco é SQLite. Para
