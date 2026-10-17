@@ -1,0 +1,10 @@
+# O Caddy obtém e renova o certificado HTTPS sozinho (Let's Encrypt).
+SEU-DOMINIO {
+	encode gzip
+	reverse_proxy 127.0.0.1:8001
+	log {
+		output file /var/log/caddy/bot-whatsapp.log {
+			roll_keep 7
+		}
+	}
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=Bot WhatsApp da clínica
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bot
+Group=bot
+WorkingDirectory=/opt/bot-whatsapp
+EnvironmentFile=/etc/bot-whatsapp/bot.env
+# Só escuta localmente; o Caddy recebe o HTTPS e repassa.
+ExecStart=/opt/bot-whatsapp/.venv/bin/uvicorn app.main:criar_app --factory --host 127.0.0.1 --port 8001 --proxy-headers
+Restart=always
+RestartSec=3
+
+# Endurecimento: o processo só escreve na pasta do banco.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/bot-whatsapp
+MemoryMax=600M
+
+[Install]
+WantedBy=multi-user.target
